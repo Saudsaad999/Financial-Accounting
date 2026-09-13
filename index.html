@@ -24,7 +24,7 @@
             <div class="flex items-center gap-4">
                 <!-- شعار الجمعية PNG -->
                 <div class="w-20 h-20 rounded-xl bg-gray-50 border border-gray-100 p-1 flex items-center justify-center flex-shrink-0">
-                    <img src="logo.png" alt="شعار الجمعية" class="w-full h-full object-contain">
+                    <img src="logo.png" alt="شعار الجمعية" class="w-full h-full object-contain" onerror="this.style.display='none'">
                 </div>
                 <div>
                     <h1 class="text-xl font-bold text-gray-800">نظام إدارة العهد والسلف المالية</h1>
@@ -75,7 +75,7 @@
                     </div>
                 </div>
                 <button type="submit" id="btn-save-custody" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl text-sm transition">
-                    حفظ 
+                    حفظ في قاعدة البيانات السحابية
                 </button>
             </form>
         </div>
@@ -207,7 +207,7 @@
     </div>
 
     <script>
-        // --- إعدادات قاعدة البيانات السحابية Supabase (المشروع: Financial Accounting) ---
+        // --- إعدادات قاعدة البيانات السحابية Supabase ---
         const SUPABASE_URL = 'https://mrieddqxzmzlpodrnzyl.supabase.co';
         const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1yaWVkZHF4em16bHBvZHJuenlsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkyODg0NTcsImV4cCI6MjEwNDg2NDQ1N30._PNBpDBjNOC2IUN9aZKhUobh-F9eWhHz0ZFg1WVSWGA';
 
@@ -347,7 +347,7 @@
 
             let currentBalance = 0, totalDeposit = 0, totalExpense = 0;
 
-            const sortedItems = (custody.imprest_items || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+            const sortedItems = (custody.imprest_items || []).sort((a, b) => new Date(a.created_at || a.date) - new Date(b.created_at || b.date));
 
             sortedItems.forEach((item, index) => {
                 const dep = Number(item.deposit || 0);
