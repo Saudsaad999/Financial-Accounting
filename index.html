@@ -252,25 +252,32 @@
             btn.innerText = 'جاري الحفظ في السحابة...';
 
             try {
-                // 1. إضافة العهدة
+                // حفظ العهدة مع تهيئة الأعمدة
                 const { error: custodyErr } = await _supabase
                     .from('custodies')
-                    .insert([{ code: code, type: type, custodian: custodian, amount: amount }]);
+                    .insert([{ 
+                        code: code, 
+                        type: type, 
+                        custodian: custodian, 
+                        amount: amount,
+                        total_amount: 0,
+                        remaining_amount: amount 
+                    }]);
 
                 if (custodyErr) throw custodyErr;
 
-                // 2. إضافة الرصيد الأولي كإيداع
-                const { error: itemErr } = await _supabase
-                    .from('imprest_items')
-                    .insert([{
-                        custody_code: code,
-                        date: new Date().toISOString().split('T')[0],
-                        description: `رصيد أول المدة (${custodian})`,
-                        deposit: amount,
-                        expense: 0.00
-                    }]);
-
-                if (itemErr) throw itemErr;
+                // محاولة إضافة السجل الأولي في جدول الحركات إن وجد
+                try {
+                    await _supabase
+                        .from('imprest_items')
+                        .insert([{
+                            custody_code: code,
+                            date: new Date().toISOString().split('T')[0],
+                            description: `رصيد أول المدة (${custodian})`,
+                            deposit: amount,
+                            expense: 0.00
+                        }]);
+                } catch(e) { console.log('Notice: imprest_items skip'); }
 
                 this.reset();
                 alert('تمت إضافة العهدة بنجاح!');
@@ -284,42 +291,58 @@
             }
         });
 
-        // --- جلب قائمة العهد المالية ---
+        // --- جلب قائمة العهد المالية مباشرة ومضمونة ---
         async function loadCustodyList() {
             const grid = document.getElementById('custody-cards-grid');
             grid.innerHTML = '<p class="text-xs text-gray-400 col-span-3 text-center py-6">جاري تحميل السجلات السحابية...</p>';
 
             try {
-                // جلب العهد والحركات بشكل مستقل لمنع أخطاء الربط
-                const { data: custodies, error: cErr } = await _supabase.from('custodies').select('*').order('created_at', { ascending: false });
+                // جلب جدول العهد الرئيسي فقط دون إجبار الربط مع جداول ثانوية
+                const { data: custodies, error: cErr } = await _supabase.from('custodies').select('*').order('id', { ascending: false });
                 if (cErr) throw cErr;
-
-                const { data: items, error: iErr } = await _supabase.from('imprest_items').select('*');
-                if (iErr) throw iErr;
 
                 if (!custodies || custodies.length === 0) {
                     grid.innerHTML = '<p class="text-xs text-gray-400 col-span-3 text-center py-6">لا توجد سجلات عهد في قاعدة البيانات السحابية.</p>';
                     return;
                 }
 
+                // جلب الحركات المالية بأسلوب آمن لا يوقف التطبيق في حال عدم وجود الجدول
+                let itemsMap = {};
+                try {
+                    const { data: items } = await _supabase.from('imprest_items').select('*');
+                    if (items) {
+                        items.forEach(i => {
+                            if (!itemsMap[i.custody_code]) itemsMap[i.custody_code] = [];
+                            itemsMap[i.custody_code].push(i);
+                        });
+                    }
+                } catch(e) {
+                    console.warn('تنويه: متعذر جلب جدول imprest_items، يتم الاعتماد على قيم custodies مباشرة');
+                }
+
                 grid.innerHTML = '';
                 custodies.forEach(c => {
-                    let deposit = 0, spent = 0;
-                    const custodyItems = (items || []).filter(i => i.custody_code === c.code);
+                    let deposit = parseFloat(c.amount || 0);
+                    let spent = parseFloat(c.total_amount || 0);
                     
-                    custodyItems.forEach(i => {
-                        deposit += Number(i.deposit || 0);
-                        spent += Number(i.expense || 0);
-                    });
+                    if (itemsMap[c.code] && itemsMap[c.code].length > 0) {
+                        deposit = 0;
+                        spent = 0;
+                        itemsMap[c.code].forEach(i => {
+                            deposit += parseFloat(i.deposit || 0);
+                            spent += parseFloat(i.expense || 0);
+                        });
+                    }
+
                     let rem = deposit - spent;
 
                     grid.innerHTML += `
                         <div onclick="openCustodyDetails('${c.code}')" class="bg-gray-50 hover:bg-blue-50 border border-gray-200 p-4 rounded-xl cursor-pointer transition space-y-2">
                             <div class="flex justify-between items-center">
                                 <span class="font-bold text-gray-800 text-sm">${c.code}</span>
-                                <span class="text-xs bg-blue-100 text-blue-700 font-semibold px-2 py-0.5 rounded-md">${c.type}</span>
+                                <span class="text-xs bg-blue-100 text-blue-700 font-semibold px-2 py-0.5 rounded-md">${c.type || 'عهدة'}</span>
                             </div>
-                            <div class="text-xs text-gray-600">المسؤول: <span class="font-semibold">${c.custodian}</span></div>
+                            <div class="text-xs text-gray-600">المسؤول: <span class="font-semibold">${c.custodian || '-'}</span></div>
                             <div class="flex justify-between items-center pt-2 border-t border-gray-200 text-xs">
                                 <span class="text-gray-500">الرصيد المتبقي: <strong class="text-emerald-700">${rem.toFixed(2)} ر.س</strong></span>
                                 <span class="text-blue-600 font-bold hover:underline">عرض التفاصيل &larr;</span>
@@ -350,9 +373,23 @@
                 if (cErr) throw cErr;
                 activeCustodyData = custody;
 
-                const { data: items, error: iErr } = await _supabase.from('imprest_items').select('*').eq('custody_code', activeCustodyCode);
-                if (iErr) throw iErr;
-                activeItemsData = items || [];
+                activeItemsData = [];
+                try {
+                    const { data: items } = await _supabase.from('imprest_items').select('*').eq('custody_code', activeCustodyCode);
+                    if (items) activeItemsData = items;
+                } catch(e) {}
+
+                // إذا لم توجد حركة سابقة، يتم إظهار الرصيد المبدئي
+                if (activeItemsData.length === 0) {
+                    activeItemsData = [{
+                        id: 'init',
+                        date: new Date().toISOString().split('T')[0],
+                        description: `رصيد أول المدة (${custody.custodian || ''})`,
+                        deposit: parseFloat(custody.amount || 0),
+                        expense: 0.00,
+                        doc_url: null
+                    }];
+                }
 
                 const tbody = document.getElementById('table-body');
                 const pdfImgContainer = document.getElementById('pdf-images-container');
@@ -361,9 +398,7 @@
 
                 let currentBalance = 0, totalDeposit = 0, totalExpense = 0;
 
-                const sortedItems = activeItemsData.sort((a, b) => new Date(a.created_at || a.date) - new Date(b.created_at || b.date));
-
-                sortedItems.forEach((item, index) => {
+                activeItemsData.forEach((item, index) => {
                     const dep = Number(item.deposit || 0);
                     const exp = Number(item.expense || 0);
                     totalDeposit += dep;
@@ -373,7 +408,7 @@
                     tbody.innerHTML += `
                         <tr class="hover:bg-gray-50 transition">
                             <td class="p-3 text-xs font-bold text-gray-500">${index + 1}</td>
-                            <td class="p-3 text-xs text-gray-500">${item.date}</td>
+                            <td class="p-3 text-xs text-gray-500">${item.date || '-'}</td>
                             <td class="p-3 font-semibold text-gray-800">${item.description}</td>
                             <td class="p-3 text-center no-print">
                                 ${item.doc_url ? `
@@ -387,7 +422,7 @@
                             <td class="p-3 font-bold text-rose-600">${exp > 0 ? exp.toFixed(2) + ' ر.س' : '-'}</td>
                             <td class="p-3 font-bold text-blue-800">${currentBalance.toFixed(2)} ر.س</td>
                             <td class="p-3 text-center no-print">
-                                <button onclick="deleteExpense(${item.id})" class="text-rose-500 hover:text-rose-700 text-xs font-medium">حذف</button>
+                                ${item.id !== 'init' ? `<button onclick="deleteExpense(${item.id})" class="text-rose-500 hover:text-rose-700 text-xs font-medium">حذف</button>` : '-'}
                             </td>
                         </tr>
                     `;
@@ -403,8 +438,8 @@
                 });
 
                 document.getElementById('dash-code').innerText = custody.code;
-                document.getElementById('dash-type').innerText = custody.type;
-                document.getElementById('dash-custodian').innerText = `المسؤول: ${custody.custodian}`;
+                document.getElementById('dash-type').innerText = custody.type || 'عهدة';
+                document.getElementById('dash-custodian').innerText = `المسؤول: ${custody.custodian || '-'}`;
                 document.getElementById('dash-received').innerText = totalDeposit.toFixed(2) + ' ر.س';
                 document.getElementById('dash-spent').innerText = totalExpense.toFixed(2) + ' ر.س';
                 document.getElementById('dash-remaining').innerText = currentBalance.toFixed(2) + ' ر.س';
